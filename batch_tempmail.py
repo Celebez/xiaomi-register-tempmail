@@ -1,29 +1,33 @@
 #!/usr/bin/env python3
 """
-Xiaomi Account Batch Registration — Temp Mail Edition
-=====================================================
+Xiaomi Account Batch Registration — Temp Mail (mail.tm) Edition
+===============================================================
 
-Modified from guajiimi/xiaomi-register to use mail.tm instead of Gmail IMAP.
-Registers N Xiaomi accounts in batch with one mail.tm inbox per account.
+Registers N Xiaomi accounts in batch using mail.tm disposable email — no Gmail
+or personal email setup required. Each account gets its own private mail.tm
+inbox, receives the 6-digit verification code from Xiaomi there, and gets
+created fully automatically via the reverse-engineered 8-step Xiaomi API flow.
+
+Flow (per account):
+  1. Warm-up: GET register page
+  2. POST captcha/v2/data with encrypted browser fingerprint → e_token
+  3. Solve reCAPTCHA Enterprise via 2Captcha → gRecaptchaResponse
+  4. POST captcha/v2/recaptcha/verify → vToken (cookie)
+  5. Encrypt email+password (AES+RSA via Node.js encrypt.cjs)
+  6. POST sendEmailRegTicket with vToken cookie → code emailed
+  7. Poll mail.tm inbox for 6-digit code from noreply@notice.xiaomi.com
+  8. POST verifyEmailRegTicket → account created, cookies returned
 
 Usage:
     python batch_tempmail.py                  # register 10 accounts (default)
     python batch_tempmail.py --count 25       # register 25 accounts
     python batch_tempmail.py --resume         # skip already-registered emails
-    python batch_tempmail.py --start-from 5   # start from index 5
+    python batch_tempmail.py --dry-run        # simulate without 2Captcha
 
 Prerequisites:
     - Python 3.10+
-    - Node.js 18+ (for scripts/encrypt.cjs EUI encryption)
-    - pip install curl-cffi pycryptodome python-dotenv mailtm requests
-
-Environment (.env):
-    TWOCAPTCHA_API_KEY=your_2captcha_key
-    MAILTM_PASSWORD_BASE=SomeRandomPass123!  # same password reused for all mail.tm inboxes
-
-Output:
-    accounts.jsonl  — one JSON per line for each SUCCESS
-    failed.jsonl    — one JSON per line for each FAILURE (with error reason)
+    - Node.js 18+ (for scripts/encrypt.cjs)
+    - pip install -r requirements.txt
 """
 
 import os

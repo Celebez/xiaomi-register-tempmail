@@ -3,7 +3,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Modified from [`guajiimi/xiaomi-register`](https://github.com/guajiimi/xiaomi-register) to use **mail.tm** as disposable email provider instead of Gmail IMAP. Registers N Xiaomi accounts in batch — each account gets its own mail.tm inbox, receives the verification code there, and gets created fully automatically via reverse-engineered Xiaomi API flow.
+Registers N Xiaomi accounts in batch using **mail.tm** as disposable email provider — no Gmail or personal email setup required. Each account gets its own private mail.tm inbox, receives the 6-digit verification code from Xiaomi there, and gets created fully automatically via the reverse-engineered Xiaomi API flow (8-step browserless registration).
 
 ## 🎬 Demo
 
@@ -425,11 +425,11 @@ python batch_tempmail.py --count 5
 Template fingerprint sudah basi. Regenerate:
 
 ```bash
-# Pakai Playwright + Chromium untuk capture ulang
+# Pakai Playwright + Chromium untuk capture ulang fingerprint browser
 # (lihat docs/FLOW.md section "Crypto s/d (fingerprint captcha)")
 pip install playwright
 playwright install chromium
-# Jalankan capture script dari repo original guajiimi/xiaomi-register
+# Jalankan script capture browser fingerprint Xiaomi (lihat docs/FLOW.md)
 ```
 
 ### `verifyEmailRegTicket failed` (semua akun gagal)
@@ -438,7 +438,7 @@ Kemungkinan besar Xiaomi sudah blacklist domain `@web-library.net`. Opsi:
 
 1. **Tunggu 24-48 jam** (mungkin temporary block)
 2. **Ganti ke temp mail lain** — patch `TempMail` class di `batch_tempmail.py` untuk pakai `mail.tm` alternative domain atau provider lain
-3. **Pakai Gmail IMAP** — install Google App Password di Gmail, pakai script original `guajiimi/xiaomi-register`
+3. **Pakai Gmail IMAP** — install Google App Password di Gmail, modifikasi script untuk pakai `imaplib` (polling IMAP Gmail untuk verifikasi code)
 
 ### `TWOCAPTCHA_API_KEY not set`
 
@@ -483,13 +483,13 @@ npm install crypto-js
 
 ## 📄 License
 
-MIT — sama dengan original [`guajiimi/xiaomi-register`](https://github.com/guajiimi/xiaomi-register).
+MIT License — bebas digunakan untuk tujuan apapun.
 
 ## 🙏 Credits
 
-- Original script & reverse-engineering: [`guajiimi`](https://github.com/guajiimi)
 - mail.tm API: [docs.mail.tm](https://docs.mail.tm)
 - 2Captcha service: [2captcha.com](https://2captcha.com)
+- Xiaomi account endpoints & encryption scheme discovered via public reverse-engineering of the browser flow
 
 ---
 

@@ -1,7 +1,7 @@
 {
   "name": "xiaomi-register-tempmail",
   "version": "1.0.0",
-  "description": "Batch Xiaomi account registration using mail.tm temp mail",
+  "description": "Batch Xiaomi account registration using mail.tm disposable email — no Gmail setup needed",
   "main": "batch_tempmail.py",
   "scripts": {
     "run": "python batch_tempmail.py",
