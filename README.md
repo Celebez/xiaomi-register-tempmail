@@ -412,6 +412,43 @@ See **[docs/CAPTCHA_FREE_OPTIONS.md](docs/CAPTCHA_FREE_OPTIONS.md)** for honest 
 - 📊 Cost comparison table for 7+ services
 - 🔧 One-line code switch between providers
 
+## 🔀 Quick-Switch Captcha Provider CLI
+
+There's a standalone tool `switch_captcha.py` for comparing and switching providers without running registration:
+
+```bash
+# List all providers
+python switch_captcha.py list
+# Compare costs
+python switch_captcha.py compare
+# Show details + signup link for one provider
+python switch_captcha.py info capsolver
+# Check balance (needs API key in env)
+CAPSOLVER_API_KEY=your_key python switch_captcha.py balance capsolver
+# Test createTask + getTaskResult (costs 1 solve)
+CAPSOLVER_API_KEY=your_key python switch_captcha.py test capsolver
+```
+
+### Cheapest path for 10 accounts
+
+1. **Sign up CapSolver** → free $1 credit, no payment method needed
+   - https://dashboard.capsolver.com/signup?invite=U5fbvdAh-zXv
+2. **Set in `.env`**:
+   ```env
+   CAPTCHA_PROVIDER=capsolver
+   CAPSOLVER_API_KEY=your_capsolver_api_key_here
+   ```
+3. **Run**:
+   ```bash
+   python batch_tempmail.py --count 10
+   ```
+4. **Total cost**: $0.00 (free trial covers ~150 solves)
+
+Or via CLI flag (no .env changes needed):
+```bash
+python batch_tempmail.py -c capsolver --count 10
+```
+
 ---
 
 ## 🔧 Troubleshooting

@@ -63,8 +63,61 @@ OUTPUT_FAILED = SCRIPT_DIR / "failed.jsonl"
 CAPTCHA_SITE_KEY = "6LeBM0ocAAAAAEwYcFUjtxpVbs-0rnbSVXBBXmh4"
 CAPTCHA_PARAM_K = "8027422fb0eb42fbac1b521ec4a7961f"
 REGISTER_URL = "https://global.account.xiaomi.com/fe/service/register?_locale=en_US&_uRegion=ID"
-TWOCAPTCHA_CREATE = "https://api.2captcha.com/createTask"
-TWOCAPTCHA_RESULT = "https://api.2captcha.com/getTaskResult"
+
+# Captcha provider endpoints — all use the same RecaptchaV2EnterpriseTaskProxyless task format.
+# Override at runtime via --captcha-provider flag or CAPTCHA_PROVIDER env var.
+CAPTCHA_PROVIDERS = {
+    "2captcha": {
+        "name": "2Captcha",
+        "create": "https://api.2captcha.com/createTask",
+        "result": "https://api.2captcha.com/getTaskResult",
+        "signup": "https://2captcha.com",
+        "free_credit": "None",
+        "cost_per_solve": "$0.003",
+    },
+    "capsolver": {
+        "name": "CapSolver",
+        "create": "https://api.capsolver.com/createTask",
+        "result": "https://api.capsolver.com/getTaskResult",
+        "signup": "https://dashboard.capsolver.com/signup",
+        "free_credit": "$1 (no payment method)",
+        "cost_per_solve": "$0.0015",
+    },
+    "anticaptcha": {
+        "name": "Anti-Captcha",
+        "create": "https://api.anti-captcha.com/createTask",
+        "result": "https://api.anti-captcha.com/getTaskResult",
+        "signup": "https://anti-captcha.com",
+        "free_credit": "$5 (phone verify)",
+        "cost_per_solve": "$0.002",
+    },
+    "capmonster": {
+        "name": "CapMonster Cloud",
+        "create": "https://api.capmonster.cloud/createTask",
+        "result": "https://api.capmonster.cloud/getTaskResult",
+        "signup": "https://capmonster.cloud",
+        "free_credit": "Refundable $5 trial",
+        "cost_per_solve": "$0.0015",
+    },
+}
+
+# Default endpoints — may be overridden at runtime by configure_captcha_provider()
+TWOCAPTCHA_CREATE = CAPTCHA_PROVIDERS["2captcha"]["create"]
+TWOCAPTCHA_RESULT = CAPTCHA_PROVIDERS["2captcha"]["result"]
+
+
+def configure_captcha_provider(name: str) -> dict:
+    """Switch active captcha endpoints. Returns provider info dict."""
+    key = name.lower().strip()
+    if key not in CAPTCHA_PROVIDERS:
+        raise ValueError(
+            f"Unknown CAPTCHA provider: '{name}'. "
+            f"Available: {', '.join(CAPTCHA_PROVIDERS.keys())}"
+        )
+    info = CAPTCHA_PROVIDERS[key]
+    globals()["TWOCAPTCHA_CREATE"] = info["create"]
+    globals()["TWOCAPTCHA_RESULT"] = info["result"]
+    return info
 
 CAPTCHA_RSA_PEM = """-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArxfNLkuAQ/BYHzkzVwtu
@@ -736,11 +789,16 @@ def main():
     parser.add_argument("--provider", "-p", default=None,
                        help="Temp mail provider: mailtm, guerrillamail, harakiri "
                             "(default: TEMPMAIL_PROVIDER env var or 'mailtm')")
+    parser.add_argument("--captcha-provider", "-c", default=None,
+                       help="Captcha solving service: 2captcha, capsolver, anticaptcha, capmonster "
+                            "(default: CAPTCHA_PROVIDER env var or '2captcha'). "
+                            "Use 'capsolver' for $1 free trial.")
     args = parser.parse_args()
 
     api_key = os.getenv("TWOCAPTCHA_API_KEY", "").strip()
     mailtm_password = os.getenv("MAILTM_PASSWORD_BASE", "MxBatchPass2026!")
     provider_name = args.provider or os.getenv("TEMPMAIL_PROVIDER", "mailtm")
+    captcha_name = args.captcha_provider or os.getenv("CAPTCHA_PROVIDER", "2captcha")
 
     if not api_key and not args.dry_run:
         err("TWOCAPTCHA_API_KEY not set in .env (or use --dry-run)")
@@ -753,10 +811,18 @@ def main():
         err(str(e))
         sys.exit(1)
 
+    # Switch captcha provider endpoints
+    try:
+        captcha_info = configure_captcha_provider(captcha_name)
+    except ValueError as e:
+        err(str(e))
+        sys.exit(1)
+
     print(f"{C.BOLD}{C.MAGENTA}")
     print("┌──────────────────────────────────────────────┐")
     print("│  Xiaomi Batch Register — Temp Mail Edition   │")
-    print(f"│  Provider: {provider_name:<14}  Count: {args.count:<3}    │")
+    print(f"│  Mail: {provider_name:<10}  Captcha: {captcha_info['name']:<10} │")
+    print(f"│  Count: {args.count:<3}   Cost/solve: {captcha_info['cost_per_solve']:<6}        │")
     print("└──────────────────────────────────────────────┘")
     print(f"{C.RESET}")
 
