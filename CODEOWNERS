@@ -1,0 +1,10 @@
+# CODEOWNERS — designate repo owner for required reviews
+# When a PR is opened, this user must approve before merge
+# Required when "Require review from Code Owners" is enabled in branch protection
+
+# Default owner for everything in the repo
+*       @Celebez
+
+# More specific paths can override if needed later
+# /docs/  @Celebez
+# *.py    @Celebez
