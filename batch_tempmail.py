@@ -416,10 +416,15 @@ def step8_verify_reg_ticket(session, email: str, password: str, code: str) -> di
         raise RuntimeError(f"verifyEmailRegTicket failed: {data}")
     return data
 
-def register_one(idx: int, total: int, api_key: str, mailtm_password: str) -> dict:
-    """Register one account. Returns dict with status, email, password, error."""
+def register_one(idx: int, total: int, api_key: str, mailtm_password: str, dry_run: bool = False) -> dict:
+    """Register one account. Returns dict with status, email, password, error.
+
+    If dry_run=True, sets up mail.tm inbox + generates password + simulates the
+    8-step flow with fake but realistic-looking output (no actual Xiaomi calls,
+    no 2Captcha charges). Useful for testing setup and recording demos.
+    """
     print(f"\n{C.BOLD}{C.CYAN}{'═'*60}")
-    print(f"  Account {idx+1}/{total}")
+    print(f"  Account {idx+1}/{total}{' [DRY RUN]' if dry_run else ''}")
     print(f"{'═'*60}{C.RESET}")
 
     # Setup temp mail
@@ -434,6 +439,74 @@ def register_one(idx: int, total: int, api_key: str, mailtm_password: str) -> di
     password = generate_xiaomi_password()
     session = make_session()
     vtoken: str = ""
+
+    if dry_run:
+        # Simulate the 8-step flow without making actual Xiaomi/2Captcha calls
+        time.sleep(0.4)
+        info(f"Generated password: {password}")
+        time.sleep(0.2)
+        step("[DRY] Step 1/8 — GET register page (warm-up)")
+        time.sleep(0.3)
+        ok("Status: 200, cookies: {'locale': 'en_US'}")
+        time.sleep(0.2)
+        step("[DRY] Step 2/8 — POST captcha/v2/data (encrypted fingerprint)")
+        time.sleep(0.3)
+        fake_e_token = "e_" + ''.join(random.choices(string.ascii_letters + string.digits, k=64))
+        ok(f"e_token: {fake_e_token[:32]}...")
+        time.sleep(0.2)
+        step("[DRY] Step 3/8 — Solving reCAPTCHA Enterprise via 2Captcha...")
+        time.sleep(0.3)
+        fake_task_id = str(uuid.uuid4())
+        info(f"Task ID: {fake_task_id}")
+        for attempt in range(3):
+            time.sleep(0.3)
+            info(f"Poll {attempt+1}: status=processing...")
+        time.sleep(0.3)
+        ok("Captcha solved")
+        time.sleep(0.2)
+        step("[DRY] Step 4/8 — POST captcha/v2/recaptcha/verify")
+        time.sleep(0.3)
+        vtoken = "v_" + ''.join(random.choices(string.ascii_letters + string.digits, k=128))
+        ok(f"vToken: {vtoken[:50]}...")
+        time.sleep(0.2)
+        step("[DRY] Step 5/8 — Encrypting email+password (EUI)")
+        time.sleep(0.3)
+        try:
+            eui, _ = build_eui({"email": address, "password": password})
+            ok(f"EUI: {eui[:50]}...")
+        except Exception as e:
+            warn(f"EUI skipped (Node.js setup issue): {e}")
+        time.sleep(0.2)
+        step("[DRY] Step 6/8 — POST sendEmailRegTicket")
+        time.sleep(0.3)
+        ok(f"Code sent to {address}")
+        info("Mengunggu kode verifikasi masuk...")
+        time.sleep(0.2)
+        step("[DRY] Step 7/8 — Polling mail.tm inbox...")
+        time.sleep(0.6)
+        fake_code = ''.join(random.choices(string.digits, k=6))
+        ok(f"Code received: {fake_code}")
+        time.sleep(0.2)
+        step("[DRY] Step 8/8 — POST verifyEmailRegTicket (creating account)")
+        time.sleep(0.4)
+        ok(f"Account created: {address}")
+        time.sleep(0.2)
+        print(f"\n{C.BOLD}{C.GREEN}{'─'*60}")
+        print(f"  ✓ [DRY RUN] Account ready: {address} / {password}")
+        print(f"{'─'*60}{C.RESET}")
+        return {
+            "status": "success",
+            "email": address,
+            "password": password,
+            "cookies": {
+                "passToken": "[DRY_RUN_FAKE_TOKEN]",
+                "serviceToken": "[DRY_RUN_FAKE_TOKEN]",
+                "cUserId": str(random.randint(100000000, 999999999)),
+                "userId": str(random.randint(100000000, 999999999)),
+            },
+            "dry_run": True,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
 
     try:
         # Warm-up
@@ -520,13 +593,16 @@ def main():
     parser.add_argument("--resume", action="store_true", help="Skip already-registered emails")
     parser.add_argument("--start-from", type=int, default=0, help="Start from 1-based index")
     parser.add_argument("--sleep", type=int, default=15, help="Seconds between accounts")
+    parser.add_argument("--dry-run", action="store_true",
+                       help="Setup mail.tm inbox + simulate the 8-step flow without "
+                            "actually calling Xiaomi or 2Captcha. Free, no API key needed.")
     args = parser.parse_args()
 
     api_key = os.getenv("TWOCAPTCHA_API_KEY", "").strip()
     mailtm_password = os.getenv("MAILTM_PASSWORD_BASE", "MxBatchPass2026!")
 
-    if not api_key:
-        err("TWOCAPTCHA_API_KEY not set in .env")
+    if not api_key and not args.dry_run:
+        err("TWOCAPTCHA_API_KEY not set in .env (or use --dry-run)")
         sys.exit(1)
 
     print(f"{C.BOLD}{C.MAGENTA}")
@@ -549,7 +625,7 @@ def main():
         if i < args.start_from - 1:
             continue
 
-        result = register_one(i, args.count, api_key, mailtm_password)
+        result = register_one(i, args.count, api_key, mailtm_password, dry_run=args.dry_run)
 
         # Persist immediately
         out = OUTPUT_SUCCESS if result["status"] == "success" else OUTPUT_FAILED
