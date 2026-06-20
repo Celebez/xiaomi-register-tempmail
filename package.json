@@ -1,0 +1,25 @@
+{
+  "name": "xiaomi-register-tempmail",
+  "version": "1.0.0",
+  "description": "Batch Xiaomi account registration using mail.tm temp mail",
+  "main": "batch_tempmail.py",
+  "scripts": {
+    "run": "python batch_tempmail.py",
+    "register": "python batch_tempmail.py --count 10",
+    "register-many": "python batch_tempmail.py --count 50"
+  },
+  "keywords": [
+    "xiaomi",
+    "registration",
+    "automation",
+    "mail.tm",
+    "tempmail",
+    "recaptcha",
+    "2captcha"
+  ],
+  "author": "Celebez",
+  "license": "MIT",
+  "dependencies": {
+    "crypto-js": "^4.2.0"
+  }
+}
