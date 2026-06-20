@@ -41,6 +41,7 @@ import argparse
 import re
 import base64
 import subprocess
+from abc import ABC, abstractmethod
 from pathlib import Path
 from urllib.parse import urlencode, quote, urlparse, parse_qs
 
@@ -62,7 +63,6 @@ OUTPUT_FAILED = SCRIPT_DIR / "failed.jsonl"
 CAPTCHA_SITE_KEY = "6LeBM0ocAAAAAEwYcFUjtxpVbs-0rnbSVXBBXmh4"
 CAPTCHA_PARAM_K = "8027422fb0eb42fbac1b521ec4a7961f"
 REGISTER_URL = "https://global.account.xiaomi.com/fe/service/register?_locale=en_US&_uRegion=ID"
-MAILTM_BASE = "https://api.mail.tm"
 TWOCAPTCHA_CREATE = "https://api.2captcha.com/createTask"
 TWOCAPTCHA_RESULT = "https://api.2captcha.com/getTaskResult"
 
@@ -138,33 +138,92 @@ def build_eui(fields: dict) -> tuple:
     out = json.loads(result.stdout)
     return out["EUI"], out["encryptedParams"]
 
-# ─── mail.tm client ───────────────────────────────────────────────────────────
-class TempMail:
-    """Wrapper around mail.tm API for one disposable inbox.
+# ─── Temp Mail Provider Interface + Implementations ───────────────────────────
+class TempMailProvider(ABC):
+    """Abstract interface for disposable email providers.
 
-    Note: mail.tm's anti-bot returns XML when curl_cffi's Chrome TLS fingerprint
-    is used. We use a plain session here (no impersonation).
+    Each provider returns a fresh inbox where Xiaomi's verification code
+    can be received and polled.
     """
+    address: str  # The email address assigned to this inbox
+
+    @abstractmethod
+    def create(self) -> str:
+        """Initialize a new inbox. Returns the email address."""
+
+    @abstractmethod
+    def get_messages(self) -> list:
+        """Return list of messages in the inbox (lightweight metadata)."""
+
+    @abstractmethod
+    def get_message_content(self, msg_id: str) -> str:
+        """Return full body text/HTML of a specific message."""
+
+    @abstractmethod
+    def delete(self):
+        """Best-effort cleanup. May be a no-op for some providers."""
+
+    def wait_for_verification_code(self, sender_hint: str = "xiaomi", timeout: int = 180) -> str:
+        """Poll inbox until a 6-digit code from the sender appears. Returns the code."""
+        deadline = time.time() + timeout
+        seen_ids = set()
+        info(f"Polling {self.address} for code (timeout {timeout}s)...")
+
+        while time.time() < deadline:
+            try:
+                msgs = self.get_messages()
+                for m in msgs:
+                    # Extract message ID (provider-specific field name)
+                    msg_id = str(m.get("id") or m.get("_id") or m.get("mail_id") or "")
+                    if not msg_id or msg_id in seen_ids:
+                        continue
+                    seen_ids.add(msg_id)
+                    # Extract sender — handle different formats
+                    frm = ""
+                    if isinstance(m.get("from"), dict):
+                        frm = m["from"].get("address", "")
+                    elif isinstance(m.get("from"), str):
+                        frm = m["from"]
+                    elif m.get("mail_from"):
+                        frm = m["mail_from"]
+                    subj = m.get("subject", "") or m.get("mail_subject", "")
+                    if sender_hint.lower() in frm.lower() or sender_hint.lower() in subj.lower() or "notice" in frm.lower():
+                        body = self.get_message_content(msg_id)
+                        body = body.replace("=\r\n", "").replace("=\n", "")
+                        match = re.search(r"verification code is[:\s]*(\d{6})", body, re.IGNORECASE)
+                        if match:
+                            code = match.group(1)
+                            ok(f"Code received: {code}")
+                            return code
+            except Exception as e:
+                warn(f"Poll error: {e}")
+            time.sleep(5)
+
+        raise TimeoutError(f"No code received within {timeout}s for {self.address}")
+
+
+class MailTmProvider(TempMailProvider):
+    """mail.tm — private inbox, 1 active domain (web-library.net).
+
+    Pros: Private inbox, real account creation, clean API
+    Cons: Only 1 domain, aggressive rate limits (429), likely blacklisted by Xiaomi
+    """
+    BASE = "https://api.mail.tm"
+
     def __init__(self, password: str):
         self.password = password
-        self.address = None
         self.account_id = None
         self.token = None
-        self.session = cffi_requests.Session()  # NO impersonate for mail.tm
+        # mail.tm's anti-bot returns XML when curl_cffi's Chrome fingerprint is used.
+        # Plain session (no impersonate) works fine.
+        self.session = cffi_requests.Session()
 
-    def _request_with_retry(self, method: str, url: str, max_retries: int = 3, **kwargs):
-        """mail.tm has aggressive rate limits — wrap with retry + backoff."""
+    def _request(self, method: str, url: str, max_retries: int = 3, **kwargs):
         last_err = None
         for attempt in range(max_retries):
             try:
-                if method == "GET":
-                    r = self.session.get(url, **kwargs)
-                elif method == "POST":
-                    r = self.session.post(url, **kwargs)
-                elif method == "DELETE":
-                    r = self.session.delete(url, **kwargs)
-                else:
-                    raise ValueError(f"Unknown method: {method}")
+                method_fn = getattr(self.session, method.lower())
+                r = method_fn(url, **kwargs)
                 if r.status_code == 429:
                     wait = int(r.headers.get("Retry-After", 10)) + random.randint(2, 5)
                     warn(f"mail.tm rate limited (429), waiting {wait}s...")
@@ -174,52 +233,40 @@ class TempMail:
             except Exception as e:
                 last_err = e
                 time.sleep(2 ** attempt)
-        raise RuntimeError(f"mail.tm {method} {url} failed after {max_retries} retries: {last_err}")
+        raise RuntimeError(f"mail.tm {method} {url} failed: {last_err}")
 
     def _get_domain(self) -> str:
-        # Don't set Accept header — mail.tm returns JSON-LD (dict) if Accept=json,
-        # or simple list if no Accept. We handle both.
-        r = self._request_with_retry("GET", f"{MAILTM_BASE}/domains", timeout=15)
+        r = self._request("GET", f"{self.BASE}/domains", timeout=15)
         data = r.json()
-        # Normalize: might be list or {"hydra:member": [...]}
         if isinstance(data, dict):
             domains = data.get("hydra:member", [])
         else:
             domains = data
         if not domains:
             raise RuntimeError("No mail.tm domains available")
-        # Pick first active domain
         for d in domains:
             if isinstance(d, dict) and d.get("isActive"):
                 return d["domain"]
-        # Fallback to first
         first = domains[0]
         if isinstance(first, dict):
             return first["domain"]
         raise RuntimeError(f"Unexpected domain format: {first}")
 
-    def create(self, local_prefix: str = "mx") -> str:
+    def create(self) -> str:
         domain = self._get_domain()
-        if local_prefix == "mx":
-            local_prefix = "mx" + ''.join(random.choices(string.digits + string.ascii_lowercase, k=10))
-        self.address = f"{local_prefix}@{domain}"
-        # Create account with retry
-        r = self._request_with_retry(
-            "POST", f"{MAILTM_BASE}/accounts", timeout=15,
-            json={"address": self.address, "password": self.password}
-        )
+        local = "mx" + ''.join(random.choices(string.digits + string.ascii_lowercase, k=10))
+        self.address = f"{local}@{domain}"
+        r = self._request("POST", f"{self.BASE}/accounts", timeout=15,
+                          json={"address": self.address, "password": self.password})
         if r.status_code >= 400:
             raise RuntimeError(f"mail.tm account create failed: {r.status_code} {r.text[:200]}")
         self.account_id = r.json()["id"]
-        # Get token
         self._refresh_token()
         return self.address
 
     def _refresh_token(self):
-        r = self._request_with_retry(
-            "POST", f"{MAILTM_BASE}/token", timeout=15,
-            json={"address": self.address, "password": self.password}
-        )
+        r = self._request("POST", f"{self.BASE}/token", timeout=15,
+                          json={"address": self.address, "password": self.password})
         if r.status_code >= 400:
             raise RuntimeError(f"mail.tm token failed: {r.status_code} {r.text[:200]}")
         self.token = r.json()["token"]
@@ -227,73 +274,158 @@ class TempMail:
     def _headers(self):
         return {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
 
-    def get_messages(self):
-        r = self._request_with_retry("GET", f"{MAILTM_BASE}/messages", timeout=15,
-                                     headers=self._headers())
+    def get_messages(self) -> list:
+        r = self._request("GET", f"{self.BASE}/messages", timeout=15, headers=self._headers())
         if r.status_code != 200:
             return []
         data = r.json()
-        # Handle both list and JSON-LD hydra format
         if isinstance(data, dict):
             return data.get("hydra:member", [])
         return data if isinstance(data, list) else []
 
-    def get_message_source(self, msg_id: str) -> str:
-        """Get full message body (HTML or text)."""
-        r = self._request_with_retry(
-            "GET", f"{MAILTM_BASE}/messages/{msg_id}", timeout=15,
-            headers=self._headers()
-        )
+    def get_message_content(self, msg_id: str) -> str:
+        r = self._request("GET", f"{self.BASE}/messages/{msg_id}", timeout=15,
+                          headers=self._headers())
         if r.status_code != 200:
             return ""
         data = r.json()
-        # mail.tm returns intro, text, html fields
         return " ".join(filter(None, [data.get("intro", ""), data.get("text", ""), data.get("html", "")]))
 
     def delete(self):
-        """Best-effort cleanup."""
         try:
             if self.account_id:
-                self._request_with_retry(
-                    "DELETE", f"{MAILTM_BASE}/accounts/{self.account_id}", timeout=10,
-                    headers=self._headers()
-                )
+                self._request("DELETE", f"{self.BASE}/accounts/{self.account_id}",
+                              timeout=10, headers=self._headers())
         except Exception:
             pass
 
-def poll_verification_code(tm: TempMail, timeout: int = 180) -> str:
-    """Poll mail.tm inbox until 6-digit code from Xiaomi appears."""
-    deadline = time.time() + timeout
-    seen_ids = set()
-    info(f"Polling {tm.address} for code (timeout {timeout}s)...")
 
-    while time.time() < deadline:
-        try:
-            msgs = tm.get_messages()
-            for m in msgs:
-                msg_id = m.get("id")
-                if msg_id in seen_ids:
-                    continue
-                seen_ids.add(msg_id)
-                frm = (m.get("from", {}) or {}).get("address", "")
-                subj = m.get("subject", "")
-                if "xiaomi" in frm.lower() or "xiaomi" in subj.lower() or "notice" in frm.lower():
-                    body = tm.get_message_source(msg_id)
-                    body = body.replace("=\r\n", "").replace("=\n", "")
-                    match = re.search(r"verification code is[:\s]*(\d{6})", body, re.IGNORECASE)
-                    if match:
-                        code = match.group(1)
-                        ok(f"Code received: {code}")
-                        return code
-        except Exception as e:
-            warn(f"mail.tm poll error: {e}")
-            try:
-                tm._refresh_token()
-            except Exception:
-                pass
-        time.sleep(5)
+class GuerrillaMailProvider(TempMailProvider):
+    """Guerrilla Mail — rotates among 11+ domains, no signup needed.
 
-    raise TimeoutError(f"No code received within {timeout}s for {tm.address}")
+    Pros: Many domains (less likely to be all blacklisted), no auth, sid_token auth
+    Cons: Public-ish (anyone with sid_token can read), 60-min email lifetime
+    """
+    BASE = "https://api.guerrillamail.com/ajax.php"
+
+    def __init__(self):
+        self.sid_token = None
+        self.alias = None
+        # Need Chrome impersonation to bypass their anti-bot
+        self.session = cffi_requests.Session(impersonate="chrome124")
+
+    def _get(self, action: str, **extra):
+        params = {"f": action, "lang": "en"}
+        params.update(extra)
+        if self.sid_token:
+            params["sid_token"] = self.sid_token
+        r = self.session.get(self.BASE, params=params, timeout=15)
+        if r.status_code != 200:
+            raise RuntimeError(f"Guerrilla {action} failed: {r.status_code} {r.text[:200]}")
+        return r.json()
+
+    def create(self) -> str:
+        data = self._get("get_email_address")
+        self.address = data["email_addr"]
+        self.sid_token = data["sid_token"]
+        self.alias = data.get("alias")
+        return self.address
+
+    def get_messages(self) -> list:
+        data = self._get("get_email_list", offset=0)
+        return data.get("list", [])
+
+    def get_message_content(self, msg_id: str) -> str:
+        # msg_id is the mail_id from get_email_list
+        data = self._get("fetch_email", email_id=msg_id)
+        # Combine all body fields
+        return " ".join(filter(None, [
+            data.get("mail_subject", ""),
+            data.get("mail_body", ""),
+            data.get("mail_excerpt", ""),
+            data.get("mail_html", ""),  # might not exist
+        ]))
+
+    def delete(self):
+        # Guerrilla emails auto-expire in 60 min — no explicit delete needed
+        pass
+
+
+class HarakiriProvider(TempMailProvider):
+    """Harakirimail — pick any name, public inbox, NO signup, NO auth.
+
+    Pros: Zero setup, no rate limits, no signup
+    Cons: Public inbox (anyone knowing the name can read), emails expire in 1 hour
+    Note: The 'inbox name' acts as the email local-part. Use a unique random name.
+    """
+    BASE = "https://harakirimail.com/api/v1"
+
+    def __init__(self):
+        self.session = cffi_requests.Session()
+        self.name = None  # The unique inbox name (local-part)
+
+    def create(self) -> str:
+        # Generate a unique random name with very low collision probability
+        self.name = "mx" + ''.join(random.choices(string.ascii_lowercase + string.digits, k=14))
+        self.address = f"{self.name}@harakirimail.com"
+        # No signup needed — just verify the inbox exists
+        r = self.session.get(f"{self.BASE}/inbox/{self.name}", timeout=15)
+        if r.status_code != 200:
+            raise RuntimeError(f"Harakiri inbox check failed: {r.status_code}")
+        return self.address
+
+    def get_messages(self) -> list:
+        r = self.session.get(f"{self.BASE}/inbox/{self.name}", timeout=15)
+        if r.status_code != 200:
+            return []
+        return r.json().get("emails", [])
+
+    def get_message_content(self, msg_id: str) -> str:
+        # Fetch specific email by ID
+        r = self.session.get(f"{self.BASE}/email/{msg_id}", timeout=15)
+        if r.status_code != 200:
+            return ""
+        data = r.json()
+        # Combine available fields
+        body = data.get("body", "") or data.get("html", "") or data.get("text", "")
+        # If empty, try the whole object as JSON string
+        if not body:
+            body = json.dumps(data)
+        return " ".join(filter(None, [
+            data.get("subject", ""),
+            body,
+            data.get("from", ""),
+        ]))
+
+    def delete(self):
+        # Harakiri emails auto-expire in 1 hour
+        pass
+
+
+# Provider registry — add new providers here
+TEMPMAIL_PROVIDERS = {
+    "mailtm": MailTmProvider,
+    "guerrillamail": GuerrillaMailProvider,
+    "harakiri": HarakiriProvider,
+}
+
+
+def get_temp_mail_provider(name: str = None, password: str = "MxBatchPass2026!") -> TempMailProvider:
+    """Factory: instantiate a temp mail provider by name.
+
+    Default provider is read from TEMPMAIL_PROVIDER env var, or 'mailtm' if unset.
+    Valid values: mailtm, guerrillamail, harakiri
+    """
+    name = (name or os.getenv("TEMPMAIL_PROVIDER", "mailtm")).lower().strip()
+    if name not in TEMPMAIL_PROVIDERS:
+        available = ", ".join(sorted(TEMPMAIL_PROVIDERS.keys()))
+        raise ValueError(f"Unknown TEMPMAIL_PROVIDER: '{name}'. Available: {available}")
+    cls = TEMPMAIL_PROVIDERS[name]
+    # Only MailTmProvider needs password
+    if cls == MailTmProvider:
+        return cls(password=os.getenv("MAILTM_PASSWORD_BASE", password))
+    return cls()
+
 
 # ─── Registration flow ────────────────────────────────────────────────────────
 def make_session() -> cffi_requests.Session:
@@ -308,7 +440,7 @@ def load_payload_template() -> dict:
     with open(PAYLOAD_TEMPLATE) as f:
         return json.load(f)
 
-def step2_captcha_data(session, tm: TempMail):
+def step2_captcha_data(session, tm: TempMailProvider):
     """POST captcha/v2/data, returns e_token."""
     payload = load_payload_template()
     now_ms = int(time.time() * 1000)
@@ -420,7 +552,8 @@ def step8_verify_reg_ticket(session, email: str, password: str, code: str) -> di
         raise RuntimeError(f"verifyEmailRegTicket failed: {data}")
     return data
 
-def register_one(idx: int, total: int, api_key: str, mailtm_password: str, dry_run: bool = False) -> dict:
+def register_one(idx: int, total: int, api_key: str, mailtm_password: str,
+                 provider_name: str = None, dry_run: bool = False) -> dict:
     """Register one account. Returns dict with status, email, password, error.
 
     If dry_run=True, sets up mail.tm inbox + generates password + simulates the
@@ -432,12 +565,12 @@ def register_one(idx: int, total: int, api_key: str, mailtm_password: str, dry_r
     print(f"{'═'*60}{C.RESET}")
 
     # Setup temp mail
-    tm = TempMail(password=mailtm_password)
+    tm = get_temp_mail_provider(name=provider_name, password=mailtm_password)
     try:
         address = tm.create()
-        info(f"mail.tm inbox: {address}")
+        info(f"Inbox created: {address}")
     except Exception as e:
-        err(f"mail.tm setup failed: {e}")
+        err(f"temp mail setup failed: {e}")
         return {"status": "failed", "stage": "tempmail_setup", "error": str(e)}
 
     password = generate_xiaomi_password()
@@ -540,7 +673,7 @@ def register_one(idx: int, total: int, api_key: str, mailtm_password: str, dry_r
         ok("Registration ticket sent — waiting for code...")
 
         # Poll mail.tm for verification code
-        code = poll_verification_code(tm, timeout=180)
+        code = tm.wait_for_verification_code(timeout=180)
 
         # Final verification → create account
         step8_verify_reg_ticket(session, address, password, code)
@@ -598,21 +731,32 @@ def main():
     parser.add_argument("--start-from", type=int, default=0, help="Start from 1-based index")
     parser.add_argument("--sleep", type=int, default=15, help="Seconds between accounts")
     parser.add_argument("--dry-run", action="store_true",
-                       help="Setup mail.tm inbox + simulate the 8-step flow without "
+                       help="Setup temp mail inbox + simulate the 8-step flow without "
                             "actually calling Xiaomi or 2Captcha. Free, no API key needed.")
+    parser.add_argument("--provider", "-p", default=None,
+                       help="Temp mail provider: mailtm, guerrillamail, harakiri "
+                            "(default: TEMPMAIL_PROVIDER env var or 'mailtm')")
     args = parser.parse_args()
 
     api_key = os.getenv("TWOCAPTCHA_API_KEY", "").strip()
     mailtm_password = os.getenv("MAILTM_PASSWORD_BASE", "MxBatchPass2026!")
+    provider_name = args.provider or os.getenv("TEMPMAIL_PROVIDER", "mailtm")
 
     if not api_key and not args.dry_run:
         err("TWOCAPTCHA_API_KEY not set in .env (or use --dry-run)")
         sys.exit(1)
 
+    # Validate provider name early
+    try:
+        get_temp_mail_provider(name=provider_name, password=mailtm_password)
+    except ValueError as e:
+        err(str(e))
+        sys.exit(1)
+
     print(f"{C.BOLD}{C.MAGENTA}")
     print("┌──────────────────────────────────────────────┐")
-    print("│  Xiaomi Batch Register — mail.tm Edition     │")
-    print(f"│  Target: {args.count} accounts                       │")
+    print("│  Xiaomi Batch Register — Temp Mail Edition   │")
+    print(f"│  Provider: {provider_name:<14}  Count: {args.count:<3}    │")
     print("└──────────────────────────────────────────────┘")
     print(f"{C.RESET}")
 
@@ -629,7 +773,8 @@ def main():
         if i < args.start_from - 1:
             continue
 
-        result = register_one(i, args.count, api_key, mailtm_password, dry_run=args.dry_run)
+        result = register_one(i, args.count, api_key, mailtm_password,
+                              provider_name=provider_name, dry_run=args.dry_run)
 
         # Persist immediately
         out = OUTPUT_SUCCESS if result["status"] == "success" else OUTPUT_FAILED

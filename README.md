@@ -373,6 +373,47 @@ Detail lengkap ada di [`docs/FLOW.md`](docs/FLOW.md).
 
 ---
 
+## 📋 Multi-Provider Temp Mail Support
+
+The script supports multiple disposable email providers. Switch via `--provider` flag or `TEMPMAIL_PROVIDER` env var:
+
+| Provider | Domains | Free | Auth | Notes |
+|----------|---------|------|------|-------|
+| **mailtm** (default) | `web-library.net` | ✅ | Account creation | Private inbox, likely blacklisted |
+| **guerrillamail** | Rotates 11+ domains | ✅ | sid_token | 60-min lifetime, best for rotation |
+| **harakiri** | `harakirimail.com` | ✅ | None | Public inbox, 1-hour expiry, zero setup |
+
+```bash
+# Switch provider
+python3 batch_tempmail.py --provider guerrillamail --count 10
+python3 batch_tempmail.py --provider harakiri --count 10
+python3 batch_tempmail.py --provider mailtm --count 10  # default
+
+# Or via env var
+TEMPMAIL_PROVIDER=harakiri python3 batch_tempmail.py --dry-run --count 1
+```
+
+**Why use mail.tm if other providers exist?** mail.tm is the default because it provides a **private** inbox (no other user can read your emails). Guerrilla Mail and Harakiri have public/shared inboxes by design.
+
+To add a new provider, see the `TempMailProvider` abstract base class in `batch_tempmail.py` — implement `create()`, `get_messages()`, `get_message_content()`, and `delete()`.
+
+---
+
+## 🆓 Free Captcha?
+
+**Short answer**: not really, but close.
+
+See **[docs/CAPTCHA_FREE_OPTIONS.md](docs/CAPTCHA_FREE_OPTIONS.md)** for honest analysis:
+- ❌ What doesn't work (ML solvers, audio bypass, etc.)
+- 🆓 CapSolver $1 free trial (no payment method)
+- 💰 CapMonster Cloud refundable $5 trial
+- 👤 Manual solving via real Chrome browser (truly free)
+- 🤖 Browser-Use AI agents (semi-automated)
+- 📊 Cost comparison table for 7+ services
+- 🔧 One-line code switch between providers
+
+---
+
 ## 🔧 Troubleshooting
 
 ### `error: externally-managed-environment` (PEP 668)
