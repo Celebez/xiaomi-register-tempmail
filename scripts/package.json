@@ -1,0 +1,10 @@
+{
+  "name": "xiaomi-register-encrypt",
+  "version": "1.0.0",
+  "description": "EUI encryption helper for Xiaomi registration (AES+RSA)",
+  "main": "encrypt.cjs",
+  "private": true,
+  "dependencies": {
+    "crypto-js": "^4.2.0"
+  }
+}

@@ -18,8 +18,5 @@
     "2captcha"
   ],
   "author": "Celebez",
-  "license": "MIT",
-  "dependencies": {
-    "crypto-js": "^4.2.0"
-  }
+  "license": "MIT"
 }
