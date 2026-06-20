@@ -5,6 +5,12 @@
 
 Modified from [`guajiimi/xiaomi-register`](https://github.com/guajiimi/xiaomi-register) to use **mail.tm** as disposable email provider instead of Gmail IMAP. Registers N Xiaomi accounts in batch — each account gets its own mail.tm inbox, receives the verification code there, and gets created fully automatically via reverse-engineered Xiaomi API flow.
 
+## 🎬 Demo
+
+![Demo animation showing --dry-run mode creating 2 mail.tm inboxes and simulating the 8-step Xiaomi registration flow](docs/demo.gif)
+
+The GIF above shows `--dry-run` mode (no 2Captcha charges): a real mail.tm inbox is created, the 8-step Xiaomi flow is simulated with realistic-looking output (e_token, vToken, EUI encryption, verification code polling), and credentials are saved to `accounts.jsonl`.
+
 ---
 
 ## 📑 Table of Contents
