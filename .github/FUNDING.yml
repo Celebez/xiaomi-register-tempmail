@@ -1,0 +1,15 @@
+# GitHub Sponsors funding configuration
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+#
+# Uncomment and fill in the platforms you want to enable.
+#
+# github: octocat
+# patreon: octocat
+# open_collective: octocat
+# ko_fi: octocat
+# tidelift: octocat
+# community_bridge: octocat
+# liberapay: octocat
+# issuehunt: octocat
+# otechie: octocat
+# custom: ["https://example.com/your-payment-page"]

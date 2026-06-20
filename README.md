@@ -1,7 +1,14 @@
 # Xiaomi Account Registration — Temp Mail (mail.tm) Edition
 
+<div align="center">
+
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](./.github/workflows/ci.yml)
+[![GitHub stars](https://img.shields.io/github/stars/Celebez/xiaomi-register-tempmail.svg)](https://github.com/Celebez/xiaomi-register-tempmail/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/Celebez/xiaomi-register-tempmail.svg)](https://github.com/Celebez/xiaomi-register-tempmail/issues)
+
+</div>
 
 Registers N Xiaomi accounts in batch using **mail.tm** as disposable email provider — no Gmail or personal email setup required. Each account gets its own private mail.tm inbox, receives the 6-digit verification code from Xiaomi there, and gets created fully automatically via the reverse-engineered Xiaomi API flow (8-step browserless registration).
 
@@ -483,7 +490,19 @@ npm install crypto-js
 
 ## 📄 License
 
-MIT License — bebas digunakan untuk tujuan apapun.
+MIT License — lihat [LICENSE](LICENSE).
+
+## 🤝 Contributing
+
+Lihat [CONTRIBUTING.md](CONTRIBUTING.md) untuk panduan development setup, coding style, dan daftar area yang bisa dikontribusikan.
+
+## 🔒 Security
+
+Untuk laporan vulnerability, lihat [SECURITY.md](SECURITY.md). **Jangan buka issue publik untuk masalah keamanan.**
+
+## 📝 Changelog
+
+Lihat [CHANGELOG.md](CHANGELOG.md) untuk history perubahan.
 
 ## 🙏 Credits
 
